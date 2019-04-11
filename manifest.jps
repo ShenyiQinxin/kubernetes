@@ -1,20 +1,23 @@
----
 type: install
 version: 1.5
 id: kubernetes
 baseUrl: https://raw.githubusercontent.com/jelastic-jps/kubernetes/master
 description:
   text: /text/description-kube.md
-  short: Kubernetes Cluster (Beta)
+  short: Kubernetes Cluster
 categories:
-  - apps/popular
   - apps/clusters
-  - apps/microservices
+  - apps/dev-and-admin-tools
 
 logo: /images/k8s-logo.png
 name: Kubernetes Cluster
 targetRegions:
   type: vz7
+  
+onBeforeInit: |  
+  var resp = jelastic.billing.account.GetQuotas(appid, session, 'environment.jelasticssl.enabled');
+  if (resp.result != 0 ) return resp;  
+  return  { result: 0, ssl: !!resp.array[0].value };
   
 settings:
   fields:
@@ -26,8 +29,8 @@ settings:
     default: 2
   - type: checkbox
     name: storage
-    caption: Attach and activate Storage Node on Kubernetes Cluster
-    value: false
+    caption: Attach Storage Node and Activate Dynamic Volume Provisioning on Kubernetes Cluster
+    value: true
   - name: deploy
     type: radio-fieldset
     values:
@@ -57,7 +60,7 @@ ssl: true
 nodes:
 - count: 1
   cloudlets: 32
-  image: jelastic/kubernetes:master
+  image: jelastic/kubernetes:latest
   nodeGroup: master
   displayName: Master
   extip: false
@@ -66,7 +69,7 @@ nodes:
 
 - count: ${settings.worker}
   nodeGroup: cp
-  image: jelastic/kubernetes:master
+  image: jelastic/kubernetes:latest
   displayName: Workers
   cloudlets: 32
   extip: false
@@ -101,13 +104,13 @@ actions:
   init-kubernetes:
     cmd[master]: |-
       systemctl daemon-reload > /dev/null 2>&1
-      service kubelet restart > /dev/null 2>&1
-      kubeadm init --config /etc/kubernetes/custom-kubeadm.yaml --ignore-preflight-errors=all
+      kubeadm init --config /etc/kubernetes/custom-kubeadm.yaml --ignore-preflight-errors=swap
       mkdir -p $HOME/.kube
       cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
       chown root:root $HOME/.kube/config
-      iptables -I KUBE-FIREWALL -m comment --comment "kubernetes firewall for dropping marked packets" -m mark --mark 0x8000/0x8000 -j  ACCEPT
+      iptables -I INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
       service iptables save
+      systemctl enable kubelet.service
       kubeadm token create $(kubeadm token generate) --print-join-command --ttl=0 > /var/lib/connect/settings
       
   manage-ingress-routes:
@@ -119,11 +122,11 @@ actions:
   connect-workers:
     cmd[cp]: |-
       systemctl daemon-reload > /dev/null 2>&1
-      service kubelet restart > /dev/null 2>&1
-      $(cat /var/lib/connect/settings) --ignore-preflight-errors=all > /dev/null 2>&1
+      $(cat /var/lib/connect/settings) --ignore-preflight-errors=swap > /dev/null 2>&1
       sleep 5
-      iptables -I KUBE-FIREWALL -m comment --comment "kubernetes firewall for dropping marked packets" -m mark --mark 0x8000/0x8000 -j  ACCEPT
+      iptables -I INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
       service iptables save
+      systemctl enable kubelet.service
   
   setup-overlay:
     cmd[master]: |-
